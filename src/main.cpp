@@ -8,8 +8,8 @@
 #include <esp_sntp.h>
 
 // --- CREDENZIALI WI-FI ---
-const char* ssid = "Lorenzo's Galaxy A34";
-const char* password = "LolloPazzo";
+const char* ssid = "D-Link-353463";
+const char* password = "JPLPMqjGmV";
 
 // --- IMPOSTAZIONI NTP (ITALIA) ---
 const char* ntpServer1 = "ntp1.inrim.it"; 
@@ -420,6 +420,24 @@ void setup() {
     Serial.println("[SYSTEM] Errore montaggio LittleFS!");
     return;
   }
+
+  // --- LOGICA DI FACTORY RESET HARDWARE ---
+  // Controlla se il pulsante BOOT è premuto all'avvio
+  if (digitalRead(BOOT_BUTTON) == LOW) {
+    Serial.println("[SYSTEM] FACTORY RESET RICHIESTO! Formattazione in corso...");
+    LittleFS.remove("/config.json");
+    
+    // Fai lampeggiare il LED di rosso per dare un feedback visivo dell'avvenuto reset
+    for(int i = 0; i < 5; i++) {
+      rgbLedWrite(RGB_BUILTIN, 255, 0, 0); delay(200);
+      rgbLedWrite(RGB_BUILTIN, 0, 0, 0); delay(200);
+    }
+    Serial.println("[SYSTEM] Reset completato. Riavvia la scheda o rilascia il pulsante.");
+    
+    // Blocca l'esecuzione finché non si resetta fisicamente la scheda
+    while(true) { delay(100); } 
+  }
+  // -----------------------------------------
   
   caricaDati();
 
