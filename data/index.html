@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2C5D4F">
+<link rel="icon" type="image/png" href="favicon.png">
+<title>Wallie – Accesso</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E0EFEB; --surface:#FFFFFF; --ink:#12302A; --muted:#4A6B60;
+  --line:#B4D0C6; --accent:#2C5D4F; --accent-ink:#FFFFFF; --soft:#CFE3DC; --err:#B3261E;
+  --font:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  box-sizing:border-box;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F211C; --surface:#17332B; --ink:#E7F4EA; --muted:#A3C4B8;
+    --line:#2A4D43; --accent:#7CC4AE; --accent-ink:#0F211C; --soft:#1F4037; --err:#FF8A80;
+  }
+}
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%}
+body{
+  margin:0; min-height:100%; background:var(--bg); color:var(--ink);
+  font-family:var(--font); font-size:18px; line-height:1.4;
+  display:flex; justify-content:center; align-items:center;
+  padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));
+}
+main{width:100%; max-width:380px; text-align:center}
+.logo{display:block; width:128px; height:128px; margin:0 auto 1rem}
+.brand{font-size:2.4rem; font-weight:700; letter-spacing:-.02em; color:var(--accent); margin:0; line-height:1.1}
+.tag{margin:.25rem 0 1.5rem; color:var(--muted); font-size:.95rem}
+.link{display:inline-block; margin-top:1rem; color:var(--accent); font-weight:700; min-height:44px; padding:10px 0}
+h1{font-size:1.8rem; margin:0 0 .25rem; letter-spacing:-.01em}
+p.sub{margin:0; color:var(--muted)}
+
+.dots{display:flex; justify-content:center; gap:16px; margin:1.5rem 0 .5rem; min-height:28px}
+.dot{width:22px; height:22px; border-radius:50%; border:2px solid var(--accent); background:transparent}
+.dot.on{background:var(--accent)}
+.dots.shake{animation:shake .35s}
+@keyframes shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+@media (prefers-reduced-motion:reduce){.dots.shake{animation:none}}
+.msg{min-height:1.5em; margin:0 0 1rem; color:var(--muted)}
+.msg.err{color:var(--err); font-weight:700}
+
+.pad{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+.key{
+  min-height:68px; font:inherit; font-size:1.7rem; font-weight:700; color:var(--ink);
+  background:var(--surface); border:2px solid var(--line); border-radius:18px; cursor:pointer;
+}
+.key:hover{border-color:var(--accent)}
+.key:active{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+.key.ghost{background:transparent; border-color:transparent; font-size:1.1rem; color:var(--muted)}
+:focus-visible{outline:3px solid var(--accent); outline-offset:2px}
+.demo{margin-top:1.5rem; font-size:.85rem; color:var(--muted)}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="logo.png" alt="" width="128" height="128">
+
+  <div class="brand">Wallie</div>
+  <p class="tag">The help you need, right on time</p>
+  <h1 id="title">Ciao</h1>
+  <p class="sub">Inserisci il tuo PIN</p>
+
+  <div class="dots" id="dots" aria-hidden="true"></div>
+  <p class="msg" id="msg" role="status" aria-live="polite"></p>
+  <div class="pad" id="pad"></div>
+
+  <p class="demo hidden" id="demo">Modalità prova: dispenser non raggiunto. PIN di prova: 1234.<br><a class="link" href="register.html">Prima volta? Registrati</a></p>
+</main>
+
+<script>
+const PIN_LENGTH = 4;
+let pin = "", demo = false, busy = false;
+const $ = id => document.getElementById(id);
+
+async function loadProfile(){
+  try{
+    const r = await fetch("/api/profile", {signal: AbortSignal.timeout(3000)});
+    if(r.status === 404){ location.replace("register.html"); return; } // nessun utente registrato
+    if(!r.ok) throw new Error(r.status);
+    const p = await r.json();
+    if(p.name) $("title").textContent = "Ciao, " + p.name;
+  }catch(e){
+    demo = true;
+    $("demo").classList.remove("hidden");
+  }
+}
+
+function drawDots(){
+  $("dots").innerHTML = Array.from({length:PIN_LENGTH}, (_, i) =>
+    '<span class="dot'+(i < pin.length ? " on" : "")+'"></span>').join("");
+}
+
+function setMsg(t, err){
+  const m = $("msg"); m.textContent = t; m.className = "msg" + (err ? " err" : "");
+}
+
+function buildPad(){
+  const pad = $("pad");
+  ["1","2","3","4","5","6","7","8","9","","0","del"].forEach(k => {
+    if(k === ""){ pad.appendChild(document.createElement("span")); return; }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "key" + (k === "del" ? " ghost" : "");
+    b.textContent = k === "del" ? "Cancella" : k;
+    b.setAttribute("aria-label", k === "del" ? "Cancella ultima cifra" : "Cifra " + k);
+    b.onclick = () => press(k);
+    pad.appendChild(b);
+  });
+}
+
+function press(k){
+  if(busy) return;
+  if(k === "del"){ pin = pin.slice(0, -1); setMsg(""); }
+  else if(pin.length < PIN_LENGTH){ pin += k; }
+  drawDots();
+  if(pin.length === PIN_LENGTH) submit();
+}
+
+async function submit(){
+  busy = true; setMsg("Controllo…");
+  try{
+    let ok = false, token = null;
+    if(demo){
+      ok = pin === "1234"; token = "demo-token";
+    }else{
+      const r = await fetch("/api/login", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({pin})
+      });
+      if(r.ok){ const d = await r.json(); ok = true; token = d.token; }
+      else if(r.status === 429){ setMsg("Troppi tentativi. Riprova tra un minuto.", true); fail(false); return; }
+    }
+    if(ok){
+      try{ sessionStorage.setItem("token", token); }catch(e){}
+      setMsg("Accesso riuscito.");
+      // TODO: sostituire con la dashboard reale
+      setTimeout(() => { location.href = "dashboard.html"; }, 600);
+      return;
+    }
+    fail(true);
+  }catch(e){
+    setMsg("Il dispenser non risponde. Controlla il Wi‑Fi.", true); fail(false);
+  }
+}
+
+function fail(wrongPin){
+  if(wrongPin) setMsg("PIN errato. Riprova.", true);
+  const d = $("dots"); d.classList.add("shake");
+  setTimeout(() => { d.classList.remove("shake"); pin = ""; drawDots(); busy = false; }, 400);
+}
+
+document.addEventListener("keydown", e => {
+  if(/^[0-9]$/.test(e.key)) press(e.key);
+  else if(e.key === "Backspace") press("del");
+});
+
+buildPad();
+drawDots();
+loadProfile();
+</script>
+</body>
+</html>

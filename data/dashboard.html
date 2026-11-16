@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2C5D4F">
+<link rel="icon" type="image/png" href="favicon.png">
+<title>Wallie</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E0EFEB; --surface:#FFFFFF; --ink:#12302A; --muted:#4A6B60; --line:#B4D0C6;
+  --accent:#2C5D4F; --accent-ink:#FFFFFF; --soft:#CFE3DC; --err:#B3261E; --warn:#FBE9C6; --warn-ink:#5C3B00;
+  --font:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif; box-sizing:border-box;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0F211C; --surface:#17332B; --ink:#E7F4EA; --muted:#A3C4B8; --line:#2A4D43;
+  --accent:#7CC4AE; --accent-ink:#0F211C; --soft:#1F4037; --err:#FF8A80; --warn:#4A3A12; --warn-ink:#FFE2A8;
+}}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.4 var(--font)}
+.top{display:flex;align-items:center;gap:10px;padding:max(14px,env(safe-area-inset-top)) 16px 8px;max-width:480px;margin:0 auto}
+.top img{width:36px;height:36px}.top b{font-size:1.5rem;color:var(--accent);letter-spacing:-.02em}
+main{max-width:480px;margin:0 auto;padding:0 16px calc(104px + env(safe-area-inset-bottom))}
+h2{font-size:1.2rem;margin:1.5rem 0 .6rem}
+.hidden{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+
+.alert{background:var(--warn);color:var(--warn-ink);border-radius:16px;padding:12px 16px;margin:.5rem 0;font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:var(--soft);border-radius:999px;padding:4px 14px;font-size:.95rem}
+.chip.bad{background:var(--warn);color:var(--warn-ink);font-weight:700}
+.slots{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.slot{aspect-ratio:1;border:2px dashed var(--line);border-radius:14px;display:grid;place-items:center;font-size:.85rem;color:var(--muted);line-height:1.1;text-align:center}
+.slot.on{border:2px solid var(--accent);background:var(--surface);color:var(--ink);font-weight:700}
+
+.card{display:block;width:100%;text-align:left;background:var(--surface);border:2px solid var(--line);border-radius:22px;padding:14px 16px;margin-bottom:12px}
+.card:hover{border-color:var(--accent)}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.row b{font-size:1.2rem}.row span{color:var(--muted);font-size:.95rem;white-space:nowrap}
+.bar{height:10px;border-radius:5px;background:var(--soft);margin:10px 0 6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.bar.low i{background:#D98E04}
+.meta{color:var(--muted);font-size:.95rem;margin-bottom:8px}
+.empty{text-align:center;color:var(--muted);padding:1rem 0}
+
+.btn{width:100%;min-height:60px;border:0;border-radius:18px;background:var(--accent);color:var(--accent-ink);font-size:1.15rem;font-weight:700;margin-top:6px}
+.btn.alt{background:transparent;color:var(--accent);border:2px solid var(--accent)}
+.btn.danger{background:transparent;color:var(--err);border:2px solid var(--err)}
+.btn:disabled{opacity:.4}
+.fld{display:flex;flex-direction:column;gap:6px;margin:14px 0}
+.fld>span,label.fld>span{font-weight:700}
+.fld small{color:var(--muted)}
+input[type=text],input[type=number],input[type=time],input[type=password],select{
+  width:100%;min-height:56px;padding:0 14px;font:inherit;font-size:1.1rem;color:var(--ink);background:var(--surface);
+  border:2px solid var(--line);border-radius:14px}
+input:focus,select:focus{border-color:var(--accent)}
+.step{display:flex;align-items:center;gap:12px}
+.step button{width:56px;height:56px;border-radius:14px;border:2px solid var(--line);background:var(--surface);font-size:1.6rem;font-weight:700}
+.step output{min-width:48px;text-align:center;font-size:1.4rem;font-weight:700}
+.sw{flex-direction:row;align-items:center;justify-content:space-between;background:var(--surface);border:2px solid var(--line);border-radius:14px;padding:12px 14px}
+.sw input{width:28px;height:28px;accent-color:var(--accent)}
+.times{display:grid;gap:8px}.times div{display:flex;gap:8px}
+.times button{width:56px;border:2px solid var(--line);border-radius:14px;background:var(--surface);font-size:1.3rem}
+.days{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.days button{min-height:52px;border-radius:14px;border:2px solid var(--line);background:var(--surface);font-weight:700}
+.days button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.hint{background:var(--soft);border-radius:14px;padding:12px 14px;margin:10px 0}
+.info{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}.info span:first-child{color:var(--muted)}
+
+dialog{border:0;padding:0;width:100%;max-width:480px;margin:auto auto 0;background:var(--bg);color:var(--ink);border-radius:26px 26px 0 0;max-height:92vh}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.sheet{padding:20px 16px calc(20px + env(safe-area-inset-bottom))}
+.sheet h2{margin-top:0}
+
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:8px;background:var(--surface);border-top:1px solid var(--line);padding:8px 12px calc(8px + env(safe-area-inset-bottom))}
+.tabs button{flex:1;max-width:220px;min-height:56px;border:0;border-radius:16px;background:transparent;font-weight:700;color:var(--muted)}
+.tabs button[aria-current=page]{background:var(--soft);color:var(--accent)}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom));max-width:90%;background:var(--ink);color:var(--bg);padding:12px 18px;border-radius:16px;z-index:99}
+</style>
+</head>
+<body>
+<header class="top"><img src="favicon.png" alt=""><b>Wallie</b></header>
+<main>
+  <section id="v-meds">
+    <div id="alerts"></div>
+    <div class="chips" id="status"></div>
+    <h2>Scomparti del dispenser</h2>
+    <div class="slots" id="slots"></div>
+    <h2>Le tue medicine</h2>
+    <div id="list"></div>
+    <button class="btn" id="add" type="button">Aggiungi medicina</button>
+  </section>
+
+  <section id="v-prof" class="hidden">
+    <h2>Il tuo profilo</h2>
+    <label class="fld"><span>Nome</span><input type="text" id="p-name" maxlength="24" autocomplete="given-name"></label>
+    <label class="fld"><span>Avvisi al familiare</span><input type="text" id="p-notify" placeholder="Nome argomento ntfy">
+      <small>Se una dose non viene ritirata o le scorte finiscono, Wallie manda un avviso a questo argomento.</small></label>
+    <button class="btn" id="p-save" type="button">Salva profilo</button>
+
+    <h2>Cambia PIN</h2>
+    <label class="fld"><span>PIN attuale</span><input type="password" id="pin-old" inputmode="numeric" maxlength="4" autocomplete="current-password"></label>
+    <label class="fld"><span>Nuovo PIN</span><input type="password" id="pin-new" inputmode="numeric" maxlength="4" autocomplete="new-password"></label>
+    <button class="btn alt" id="pin-save" type="button">Cambia PIN</button>
+
+    <h2>Dispenser</h2>
+    <div id="dev"></div>
+    <button class="btn danger" id="logout" type="button" style="margin-top:1.5rem">Esci</button>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button type="button" data-tab="meds" aria-current="page">Medicine</button>
+  <button type="button" data-tab="prof">Profilo</button>
+</nav>
+<dialog id="sheet"></dialog>
+<div id="toast" class="hidden" role="status"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const DAYS = ["L","M","M","G","V","S","D"];
+const DAYN = ["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica"];
+let token = null; try{ token = sessionStorage.getItem("token"); }catch(e){}
+if(!token) location.replace("index.html");
+let demo = token === "demo-token", meds = [], state = {slots:3, water:"ok"}, profile = {name:"", notify:""}, form = null, tt;
+
+async function api(method, path, body){
+  if(demo) return null;
+  const r = await fetch("/api" + path, {method, headers:{"Content-Type":"application/json","Authorization":"Bearer " + token}, body: body ? JSON.stringify(body) : undefined});
+  if(r.status === 401){ try{ sessionStorage.removeItem("token"); }catch(e){} location.replace("index.html"); throw new Error("401"); }
+  if(!r.ok) throw new Error(r.status);
+  return r.status === 204 ? null : r.json();
+}
+function toast(t){ const e = $("toast"); e.textContent = t; e.classList.remove("hidden"); clearTimeout(tt); tt = setTimeout(() => e.classList.add("hidden"), 3500); }
+
+async function init(){
+  if(demo){
+    profile = {name:"Maria", notify:""};
+    meds = [
+      {id:1,name:"Cardioaspirina",slot:1,stock:28,capacity:30,low:5,dose:1,water:true,times:["08:00"],days:[1,1,1,1,1,1,1]},
+      {id:2,name:"Vitamina D",slot:2,stock:4,capacity:30,low:5,dose:1,water:false,times:["13:00","20:00"],days:[1,1,1,1,1,1,1]}
+    ];
+  }else{
+    try{ [state, meds, profile] = await Promise.all([api("GET","/state"), api("GET","/medicines"), api("GET","/profile")]); }
+    catch(e){ toast("Il dispenser non risponde. Controlla il Wi‑Fi."); }
+  }
+  render();
+}
+
+const isLow = m => m.stock <= m.low;
+function daysLeft(m){
+  const perDay = m.dose * m.times.length * (m.days.filter(Boolean).length / 7);
+  return perDay ? Math.floor(m.stock / perDay) : null;
+}
+
+function render(){
+  // avvisi
+  const low = meds.filter(isLow), a = [];
+  if(low.length) a.push("Scorte quasi finite: " + low.map(m => esc(m.name)).join(", ") + ".");
+  if(state.water === "low" && meds.some(m => m.water)) a.push("Riempi il serbatoio dell’acqua.");
+  $("alerts").innerHTML = a.map(t => '<div class="alert">' + t + '</div>').join("");
+  $("status").innerHTML = '<span class="chip">' + (demo ? "Modalità prova" : "Dispenser collegato") + '</span>' +
+    '<span class="chip' + (state.water === "low" ? ' bad' : '') + '">' + (state.water === "low" ? "Acqua quasi finita" : "Acqua OK") + '</span>';
+  // scomparti
+  let s = "";
+  for(let i = 1; i <= state.slots; i++){
+    const m = meds.find(x => x.slot === i);
+    s += m ? '<div class="slot on" title="' + esc(m.name) + '">' + i + '<br>' + esc(m.name.slice(0,4)) + '</div>' : '<div class="slot">' + i + '<br>libero</div>';
+  }
+  $("slots").innerHTML = s;
+  // elenco
+  $("list").innerHTML = meds.length ? meds.map(m => {
+    const pct = Math.min(100, Math.round(100 * m.stock / Math.max(m.capacity, 1))), d = daysLeft(m);
+    return '<button class="card" type="button" data-id="' + m.id + '"><div class="row"><b>' + esc(m.name) + '</b><span>Scomparto ' + m.slot + '</span></div>' +
+      '<div class="bar' + (isLow(m) ? ' low' : '') + '"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="meta">' + m.stock + ' pillole' + (d !== null ? ' · bastano per circa ' + d + (d === 1 ? ' giorno' : ' giorni') : '') + '</div>' +
+      '<div class="chips">' + m.times.map(t => '<span class="chip">' + t + '</span>').join("") + (m.water ? '<span class="chip">Con acqua</span>' : '') + (isLow(m) ? '<span class="chip bad">Quasi finita</span>' : '') + '</div></button>';
+  }).join("") : '<p class="empty">Nessuna medicina. Aggiungi la prima per iniziare.</p>';
+  $("add").disabled = meds.length >= state.slots;
+  $("add").textContent = meds.length >= state.slots ? "Tutti gli scomparti sono occupati" : "Aggiungi medicina";
+  // profilo
+  $("p-name").value = profile.name || ""; $("p-notify").value = profile.notify || "";
+  $("dev").innerHTML = [["Stato", demo ? "Non collegato" : "Collegato"], ["Scomparti", state.slots], ["Medicine caricate", meds.length]]
+    .map(r => '<div class="info"><span>' + r[0] + '</span><span>' + r[1] + '</span></div>').join("");
+}
+
+/* ---- scheda medicina ---- */
+function freeSlots(){ const used = meds.filter(m => m.id !== form.id).map(m => m.slot); const f = []; for(let i = 1; i <= state.slots; i++) if(!used.includes(i)) f.push(i); return f; }
+function openSheet(m, hint){
+  form = m ? {...m, times:[...m.times], days:[...m.days]} : {id:null,name:"",slot:0,stock:30,capacity:30,low:5,dose:1,water:false,times:["08:00"],days:[1,1,1,1,1,1,1]};
+  if(!m){ form.slot = freeSlots()[0]; if(!form.slot) return toast("Tutti gli scomparti sono occupati."); }
+  drawSheet(hint); $("sheet").showModal();
+}
+function stepper(k, label){
+  return '<div class="fld"><span>' + label + '</span><div class="step"><button type="button" data-k="' + k + '" data-d="-1" aria-label="Meno">−</button><output>' + form[k] + '</output><button type="button" data-k="' + k + '" data-d="1" aria-label="Più">+</button></div></div>';
+}
+function drawSheet(hint){
+  const edit = form.id !== null;
+  $("sheet").innerHTML = '<div class="sheet"><h2>' + (edit ? "Modifica medicina" : "Nuova medicina") + '</h2>' +
+    (hint ? '<div class="hint">Medicina salvata. Premi “Porta lo scomparto al carico”, inserisci le pillole e poi indica quante ne hai messe.</div>' : '') +
+    '<label class="fld"><span>Nome della medicina</span><input type="text" id="f-name" maxlength="30" value="' + esc(form.name) + '" placeholder="Es. Cardioaspirina"></label>' +
+    '<label class="fld"><span>Scomparto del dispenser</span><select id="f-slot">' + freeSlots().map(n => '<option value="' + n + '"' + (n === form.slot ? ' selected' : '') + '>Scomparto ' + n + '</option>').join("") + '</select></label>' +
+    '<label class="fld"><span>Pillole inserite ora</span><input type="number" id="f-stock" inputmode="numeric" min="0" max="200" value="' + form.stock + '"></label>' +
+    stepper("low", "Avvisami quando ne restano") + stepper("dose", "Pillole per ogni assunzione") +
+    '<label class="fld sw"><span>Serve acqua</span><input type="checkbox" id="f-water"' + (form.water ? ' checked' : '') + '></label>' +
+    '<div class="fld"><span>Orari</span><div class="times">' + form.times.map((t, i) => '<div><input type="time" class="f-time" data-i="' + i + '" value="' + t + '" aria-label="Orario ' + (i + 1) + '">' + (form.times.length > 1 ? '<button type="button" data-rm="' + i + '" aria-label="Togli orario">×</button>' : '') + '</div>').join("") + '</div>' +
+    (form.times.length < 4 ? '<button class="btn alt" type="button" id="add-time" style="min-height:48px">Aggiungi orario</button>' : '') + '</div>' +
+    '<div class="fld"><span>Giorni</span><div class="days">' + DAYS.map((d, i) => '<button type="button" data-day="' + i + '" aria-pressed="' + !!form.days[i] + '" aria-label="' + DAYN[i] + '">' + d + '</button>').join("") + '</div></div>' +
+    '<button class="btn" type="button" id="save">Salva</button>' +
+    (edit ? '<button class="btn alt" type="button" id="load">Porta lo scomparto al carico</button><button class="btn alt" type="button" id="test">Prova erogazione</button><button class="btn danger" type="button" id="del">Elimina medicina</button>' : '') +
+    '<button class="btn alt" type="button" id="cancel" style="border-color:var(--line);color:var(--muted)">Annulla</button></div>';
+}
+
+const sheet = $("sheet");
+sheet.addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  if(b.dataset.k){ const lim = {low:[0,50], dose:[1,4]}[b.dataset.k]; form[b.dataset.k] = Math.max(lim[0], Math.min(lim[1], form[b.dataset.k] + +b.dataset.d)); drawSheet(); }
+  else if(b.dataset.day){ form.days[+b.dataset.day] = form.days[+b.dataset.day] ? 0 : 1; drawSheet(); }
+  else if(b.dataset.rm){ form.times.splice(+b.dataset.rm, 1); drawSheet(); }
+  else if(b.id === "add-time"){ form.times.push("12:00"); drawSheet(); }
+  else if(b.id === "save") save();
+  else if(b.id === "cancel") sheet.close();
+  else if(b.id === "load") act("POST", "/slots/" + form.slot + "/load", null, "Scomparto " + form.slot + " in posizione di carico. Inserisci le pillole e premi Salva.");
+  else if(b.id === "test") act("POST", "/dispense", {medicineId:form.id, test:true}, "Erogazione di prova: la pillola sta uscendo.");
+  else if(b.id === "del") del();
+});
+sheet.addEventListener("input", e => {
+  const t = e.target;
+  if(t.id === "f-name") form.name = t.value;
+  else if(t.id === "f-stock") form.stock = Math.max(0, Math.min(200, parseInt(t.value) || 0));
+  else if(t.id === "f-slot") form.slot = +t.value;
+  else if(t.id === "f-water") form.water = t.checked;
+  else if(t.classList.contains("f-time")) form.times[+t.dataset.i] = t.value;
+});
+
+async function act(method, path, body, ok){
+  try{ await api(method, path, body); toast(demo ? ok + " (prova)" : ok); }
+  catch(e){ toast("Il dispenser non risponde. Riprova."); }
+}
+async function save(){
+  const f = form; f.name = f.name.trim();
+  if(f.name.length < 2) return toast("Scrivi il nome della medicina.");
+  if(f.times.some(t => !t)) return toast("Controlla gli orari.");
+  if(new Set(f.times).size !== f.times.length) return toast("Ci sono due orari uguali.");
+  if(!f.days.some(Boolean)) return toast("Scegli almeno un giorno.");
+  f.times.sort(); f.capacity = Math.max(f.capacity, f.stock);
+  try{
+    const isNew = f.id === null; let saved;
+    if(isNew){ saved = await api("POST", "/medicines", f) || {...f, id:Date.now()}; meds.push(saved); }
+    else{ saved = await api("PUT", "/medicines/" + f.id, f) || f; meds = meds.map(m => m.id === f.id ? saved : m); }
+    render();
+    if(isNew){ openSheet(saved, true); } else { sheet.close(); toast("Salvato nel dispenser."); }
+  }catch(e){ toast("Non riesco a salvare. Riprova."); }
+}
+async function del(){
+  if(!confirm("Eliminare " + form.name + "? Lo scomparto tornerà libero.")) return;
+  try{ await api("DELETE", "/medicines/" + form.id); meds = meds.filter(m => m.id !== form.id); sheet.close(); render(); toast("Medicina eliminata."); }
+  catch(e){ toast("Non riesco a eliminarla. Riprova."); }
+}
+
+$("add").onclick = () => openSheet(null);
+$("list").onclick = e => { const c = e.target.closest(".card"); if(c) openSheet(meds.find(m => m.id == c.dataset.id)); };
+
+/* ---- profilo ---- */
+$("p-save").onclick = async () => {
+  const n = $("p-name").value.trim(); if(n.length < 2) return toast("Scrivi il tuo nome.");
+  try{ await api("PUT", "/profile", {name:n, notify:$("p-notify").value.trim()}); profile = {name:n, notify:$("p-notify").value.trim()}; toast("Profilo salvato."); }
+  catch(e){ toast("Non riesco a salvare. Riprova."); }
+};
+$("pin-save").onclick = async () => {
+  const o = $("pin-old").value, n = $("pin-new").value;
+  if(!/^\d{4}$/.test(n)) return toast("Il nuovo PIN deve avere 4 cifre.");
+  if(/^(\d)\1{3}$/.test(n) || n === "1234" || n === "4321") return toast("PIN troppo facile. Scegline un altro.");
+  try{ await api("PUT", "/pin", {oldPin:o, newPin:n}); $("pin-old").value = $("pin-new").value = ""; toast("PIN cambiato."); }
+  catch(e){ toast(e.message === "403" ? "Il PIN attuale non è corretto." : "Non riesco a cambiare il PIN."); }
+};
+$("logout").onclick = () => { try{ sessionStorage.removeItem("token"); }catch(e){} location.replace("index.html"); };
+
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.removeAttribute("aria-current"));
+  b.setAttribute("aria-current", "page");
+  $("v-meds").classList.toggle("hidden", b.dataset.tab !== "meds");
+  $("v-prof").classList.toggle("hidden", b.dataset.tab !== "prof");
+  scrollTo(0, 0);
+});
+
+init();
+</script>
+</body>
+</html>
