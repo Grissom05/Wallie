@@ -8,7 +8,7 @@
 #include <esp_sntp.h>
 
 // --- CREDENZIALI WI-FI ---
-const char* ssid = "D-Link-353463";
+const char* ssid = "D-Link-353462";
 const char* password = "JPLPMqjGmV";
 
 // --- IMPOSTAZIONI NTP (ITALIA) ---
