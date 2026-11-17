@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#2C5D4F">
 <link rel="icon" type="image/png" href="favicon.png">
-<title>Wallie – Accesso</title>
+<title>Wallie - Sign in</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -65,14 +65,14 @@ p.sub{margin:0; color:var(--muted)}
 
   <div class="brand">Wallie</div>
   <p class="tag">The help you need, right on time</p>
-  <h1 id="title">Ciao</h1>
-  <p class="sub">Inserisci il tuo PIN</p>
+  <h1 id="title">Hello</h1>
+  <p class="sub">Enter your PIN</p>
 
   <div class="dots" id="dots" aria-hidden="true"></div>
   <p class="msg" id="msg" role="status" aria-live="polite"></p>
   <div class="pad" id="pad"></div>
 
-  <p class="demo hidden" id="demo">Modalità prova: dispenser non raggiunto. PIN di prova: 1234.<br><a class="link" href="register.html">Prima volta? Registrati</a></p>
+  <p class="demo hidden" id="demo">Demo mode: dispenser not found. Demo PIN: 1234.<br><a class="link" href="register.html">First time here? Register</a></p>
 </main>
 
 <script>
@@ -83,10 +83,10 @@ const $ = id => document.getElementById(id);
 async function loadProfile(){
   try{
     const r = await fetch("/api/profile", {signal: AbortSignal.timeout(3000)});
-    if(r.status === 404){ location.replace("register.html"); return; } // nessun utente registrato
+    if(r.status === 404){ location.replace("register.html"); return; } // No user is registered yet.
     if(!r.ok) throw new Error(r.status);
     const p = await r.json();
-    if(p.name) $("title").textContent = "Ciao, " + p.name;
+    if(p.name) $("title").textContent = "Hello, " + p.name;
   }catch(e){
     demo = true;
     $("demo").classList.remove("hidden");
@@ -109,8 +109,8 @@ function buildPad(){
     const b = document.createElement("button");
     b.type = "button";
     b.className = "key" + (k === "del" ? " ghost" : "");
-    b.textContent = k === "del" ? "Cancella" : k;
-    b.setAttribute("aria-label", k === "del" ? "Cancella ultima cifra" : "Cifra " + k);
+    b.textContent = k === "del" ? "Delete" : k;
+    b.setAttribute("aria-label", k === "del" ? "Delete the last digit" : "Digit " + k);
     b.onclick = () => press(k);
     pad.appendChild(b);
   });
@@ -125,7 +125,7 @@ function press(k){
 }
 
 async function submit(){
-  busy = true; setMsg("Controllo…");
+  busy = true; setMsg("Checking...");
   try{
     let ok = false, token = null;
     if(demo){
@@ -137,23 +137,23 @@ async function submit(){
         body: JSON.stringify({pin})
       });
       if(r.ok){ const d = await r.json(); ok = true; token = d.token; }
-      else if(r.status === 429){ setMsg("Troppi tentativi. Riprova tra un minuto.", true); fail(false); return; }
+      else if(r.status === 429){ setMsg("Too many attempts. Try again in a minute.", true); fail(false); return; }
     }
     if(ok){
       try{ sessionStorage.setItem("token", token); }catch(e){}
-      setMsg("Accesso riuscito.");
-      // TODO: sostituire con la dashboard reale
+      setMsg("Sign-in successful.");
+      // TODO: Replace with the production dashboard.
       setTimeout(() => { location.href = "dashboard.html"; }, 600);
       return;
     }
     fail(true);
   }catch(e){
-    setMsg("Il dispenser non risponde. Controlla il Wi‑Fi.", true); fail(false);
+    setMsg("The dispenser is not responding. Check the Wi-Fi connection.", true); fail(false);
   }
 }
 
 function fail(wrongPin){
-  if(wrongPin) setMsg("PIN errato. Riprova.", true);
+  if(wrongPin) setMsg("Incorrect PIN. Try again.", true);
   const d = $("dots"); d.classList.add("shake");
   setTimeout(() => { d.classList.remove("shake"); pin = ""; drawDots(); busy = false; }, 400);
 }

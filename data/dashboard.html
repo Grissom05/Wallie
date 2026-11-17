@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -87,34 +87,34 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
   <section id="v-meds">
     <div id="alerts"></div>
     <div class="chips" id="status"></div>
-    <h2>Scomparti del dispenser</h2>
+    <h2>Dispenser slots</h2>
     <div class="slots" id="slots"></div>
-    <h2>Le tue medicine</h2>
+    <h2>Your medicines</h2>
     <div id="list"></div>
-    <button class="btn" id="add" type="button">Aggiungi medicina</button>
+    <button class="btn" id="add" type="button">Add medicine</button>
   </section>
 
   <section id="v-prof" class="hidden">
-    <h2>Il tuo profilo</h2>
-    <label class="fld"><span>Nome</span><input type="text" id="p-name" maxlength="24" autocomplete="given-name"></label>
-    <label class="fld"><span>Avvisi al familiare</span><input type="text" id="p-notify" placeholder="Nome argomento ntfy">
-      <small>Se una dose non viene ritirata o le scorte finiscono, Wallie manda un avviso a questo argomento.</small></label>
-    <button class="btn" id="p-save" type="button">Salva profilo</button>
+    <h2>Your profile</h2>
+    <label class="fld"><span>Name</span><input type="text" id="p-name" maxlength="24" autocomplete="given-name"></label>
+    <label class="fld"><span>Family notifications</span><input type="text" id="p-notify" placeholder="ntfy topic name">
+      <small>Wallie can send notifications to this topic if a dose is not collected or supplies are running low.</small></label>
+    <button class="btn" id="p-save" type="button">Save profile</button>
 
-    <h2>Cambia PIN</h2>
-    <label class="fld"><span>PIN attuale</span><input type="password" id="pin-old" inputmode="numeric" maxlength="4" autocomplete="current-password"></label>
-    <label class="fld"><span>Nuovo PIN</span><input type="password" id="pin-new" inputmode="numeric" maxlength="4" autocomplete="new-password"></label>
-    <button class="btn alt" id="pin-save" type="button">Cambia PIN</button>
+    <h2>Change PIN</h2>
+    <label class="fld"><span>Current PIN</span><input type="password" id="pin-old" inputmode="numeric" maxlength="4" autocomplete="current-password"></label>
+    <label class="fld"><span>New PIN</span><input type="password" id="pin-new" inputmode="numeric" maxlength="4" autocomplete="new-password"></label>
+    <button class="btn alt" id="pin-save" type="button">Change PIN</button>
 
     <h2>Dispenser</h2>
     <div id="dev"></div>
-    <button class="btn danger" id="logout" type="button" style="margin-top:1.5rem">Esci</button>
+    <button class="btn danger" id="logout" type="button" style="margin-top:1.5rem">Sign out</button>
   </section>
 </main>
 
 <nav class="tabs">
-  <button type="button" data-tab="meds" aria-current="page">Medicine</button>
-  <button type="button" data-tab="prof">Profilo</button>
+  <button type="button" data-tab="meds" aria-current="page">Medicines</button>
+  <button type="button" data-tab="prof">Profile</button>
 </nav>
 <dialog id="sheet"></dialog>
 <div id="toast" class="hidden" role="status"></div>
@@ -122,8 +122,8 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const DAYS = ["L","M","M","G","V","S","D"];
-const DAYN = ["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica"];
+const DAYS = ["M","T","W","T","F","S","S"];
+const DAY_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 let token = null; try{ token = sessionStorage.getItem("token"); }catch(e){}
 if(!token) location.replace("index.html");
 let demo = token === "demo-token", meds = [], state = {slots:3, water:"ok"}, profile = {name:"", notify:""}, form = null, tt;
@@ -139,14 +139,14 @@ function toast(t){ const e = $("toast"); e.textContent = t; e.classList.remove("
 
 async function init(){
   if(demo){
-    profile = {name:"Maria", notify:""};
+    profile = {name:"Alex", notify:""};
     meds = [
-      {id:1,name:"Cardioaspirina",slot:1,stock:28,capacity:30,low:5,dose:1,water:true,times:["08:00"],days:[1,1,1,1,1,1,1]},
-      {id:2,name:"Vitamina D",slot:2,stock:4,capacity:30,low:5,dose:1,water:false,times:["13:00","20:00"],days:[1,1,1,1,1,1,1]}
+      {id:1,name:"Aspirin",slot:1,stock:28,capacity:30,low:5,dose:1,water:true,times:["08:00"],days:[1,1,1,1,1,1,1]},
+      {id:2,name:"Vitamin D",slot:2,stock:4,capacity:30,low:5,dose:1,water:false,times:["13:00","20:00"],days:[1,1,1,1,1,1,1]}
     ];
   }else{
     try{ [state, meds, profile] = await Promise.all([api("GET","/state"), api("GET","/medicines"), api("GET","/profile")]); }
-    catch(e){ toast("Il dispenser non risponde. Controlla il Wi‑Fi."); }
+    catch(e){ toast("The dispenser is not responding. Check the Wi-Fi connection."); }
   }
   render();
 }
@@ -158,61 +158,61 @@ function daysLeft(m){
 }
 
 function render(){
-  // avvisi
+  // Alerts
   const low = meds.filter(isLow), a = [];
-  if(low.length) a.push("Scorte quasi finite: " + low.map(m => esc(m.name)).join(", ") + ".");
-  if(state.water === "low" && meds.some(m => m.water)) a.push("Riempi il serbatoio dell’acqua.");
+  if(low.length) a.push("Running low on: " + low.map(m => esc(m.name)).join(", ") + ".");
+  if(state.water === "low" && meds.some(m => m.water)) a.push("Refill the water reservoir.");
   $("alerts").innerHTML = a.map(t => '<div class="alert">' + t + '</div>').join("");
-  $("status").innerHTML = '<span class="chip">' + (demo ? "Modalità prova" : "Dispenser collegato") + '</span>' +
-    '<span class="chip' + (state.water === "low" ? ' bad' : '') + '">' + (state.water === "low" ? "Acqua quasi finita" : "Acqua OK") + '</span>';
-  // scomparti
+  $("status").innerHTML = '<span class="chip">' + (demo ? "Demo mode" : "Dispenser connected") + '</span>' +
+    '<span class="chip' + (state.water === "low" ? ' bad' : '') + '">' + (state.water === "low" ? "Low water" : "Water OK") + '</span>';
+  // Dispenser slots
   let s = "";
   for(let i = 1; i <= state.slots; i++){
     const m = meds.find(x => x.slot === i);
-    s += m ? '<div class="slot on" title="' + esc(m.name) + '">' + i + '<br>' + esc(m.name.slice(0,4)) + '</div>' : '<div class="slot">' + i + '<br>libero</div>';
+    s += m ? '<div class="slot on" title="' + esc(m.name) + '">' + i + '<br>' + esc(m.name.slice(0,4)) + '</div>' : '<div class="slot">' + i + '<br>empty</div>';
   }
   $("slots").innerHTML = s;
-  // elenco
+  // Medicine list
   $("list").innerHTML = meds.length ? meds.map(m => {
     const pct = Math.min(100, Math.round(100 * m.stock / Math.max(m.capacity, 1))), d = daysLeft(m);
-    return '<button class="card" type="button" data-id="' + m.id + '"><div class="row"><b>' + esc(m.name) + '</b><span>Scomparto ' + m.slot + '</span></div>' +
+    return '<button class="card" type="button" data-id="' + m.id + '"><div class="row"><b>' + esc(m.name) + '</b><span>Slot ' + m.slot + '</span></div>' +
       '<div class="bar' + (isLow(m) ? ' low' : '') + '"><i style="width:' + pct + '%"></i></div>' +
-      '<div class="meta">' + m.stock + ' pillole' + (d !== null ? ' · bastano per circa ' + d + (d === 1 ? ' giorno' : ' giorni') : '') + '</div>' +
-      '<div class="chips">' + m.times.map(t => '<span class="chip">' + t + '</span>').join("") + (m.water ? '<span class="chip">Con acqua</span>' : '') + (isLow(m) ? '<span class="chip bad">Quasi finita</span>' : '') + '</div></button>';
-  }).join("") : '<p class="empty">Nessuna medicina. Aggiungi la prima per iniziare.</p>';
+      '<div class="meta">' + m.stock + ' pills' + (d !== null ? ' · about ' + d + (d === 1 ? ' day' : ' days') + ' remaining' : '') + '</div>' +
+      '<div class="chips">' + m.times.map(t => '<span class="chip">' + t + '</span>').join("") + (m.water ? '<span class="chip">With water</span>' : '') + (isLow(m) ? '<span class="chip bad">Low stock</span>' : '') + '</div></button>';
+  }).join("") : '<p class="empty">No medicines yet. Add one to get started.</p>';
   $("add").disabled = meds.length >= state.slots;
-  $("add").textContent = meds.length >= state.slots ? "Tutti gli scomparti sono occupati" : "Aggiungi medicina";
-  // profilo
+  $("add").textContent = meds.length >= state.slots ? "All slots are occupied" : "Add medicine";
+  // Profile
   $("p-name").value = profile.name || ""; $("p-notify").value = profile.notify || "";
-  $("dev").innerHTML = [["Stato", demo ? "Non collegato" : "Collegato"], ["Scomparti", state.slots], ["Medicine caricate", meds.length]]
+  $("dev").innerHTML = [["Status", demo ? "Not connected" : "Connected"], ["Slots", state.slots], ["Medicines loaded", meds.length]]
     .map(r => '<div class="info"><span>' + r[0] + '</span><span>' + r[1] + '</span></div>').join("");
 }
 
-/* ---- scheda medicina ---- */
+/* ---- Medicine form ---- */
 function freeSlots(){ const used = meds.filter(m => m.id !== form.id).map(m => m.slot); const f = []; for(let i = 1; i <= state.slots; i++) if(!used.includes(i)) f.push(i); return f; }
 function openSheet(m, hint){
   form = m ? {...m, times:[...m.times], days:[...m.days]} : {id:null,name:"",slot:0,stock:30,capacity:30,low:5,dose:1,water:false,times:["08:00"],days:[1,1,1,1,1,1,1]};
-  if(!m){ form.slot = freeSlots()[0]; if(!form.slot) return toast("Tutti gli scomparti sono occupati."); }
+  if(!m){ form.slot = freeSlots()[0]; if(!form.slot) return toast("All slots are occupied."); }
   drawSheet(hint); $("sheet").showModal();
 }
 function stepper(k, label){
-  return '<div class="fld"><span>' + label + '</span><div class="step"><button type="button" data-k="' + k + '" data-d="-1" aria-label="Meno">−</button><output>' + form[k] + '</output><button type="button" data-k="' + k + '" data-d="1" aria-label="Più">+</button></div></div>';
+  return '<div class="fld"><span>' + label + '</span><div class="step"><button type="button" data-k="' + k + '" data-d="-1" aria-label="Decrease">−</button><output>' + form[k] + '</output><button type="button" data-k="' + k + '" data-d="1" aria-label="Increase">+</button></div></div>';
 }
 function drawSheet(hint){
   const edit = form.id !== null;
-  $("sheet").innerHTML = '<div class="sheet"><h2>' + (edit ? "Modifica medicina" : "Nuova medicina") + '</h2>' +
-    (hint ? '<div class="hint">Medicina salvata. Premi “Porta lo scomparto al carico”, inserisci le pillole e poi indica quante ne hai messe.</div>' : '') +
-    '<label class="fld"><span>Nome della medicina</span><input type="text" id="f-name" maxlength="30" value="' + esc(form.name) + '" placeholder="Es. Cardioaspirina"></label>' +
-    '<label class="fld"><span>Scomparto del dispenser</span><select id="f-slot">' + freeSlots().map(n => '<option value="' + n + '"' + (n === form.slot ? ' selected' : '') + '>Scomparto ' + n + '</option>').join("") + '</select></label>' +
-    '<label class="fld"><span>Pillole inserite ora</span><input type="number" id="f-stock" inputmode="numeric" min="0" max="200" value="' + form.stock + '"></label>' +
-    stepper("low", "Avvisami quando ne restano") + stepper("dose", "Pillole per ogni assunzione") +
-    '<label class="fld sw"><span>Serve acqua</span><input type="checkbox" id="f-water"' + (form.water ? ' checked' : '') + '></label>' +
-    '<div class="fld"><span>Orari</span><div class="times">' + form.times.map((t, i) => '<div><input type="time" class="f-time" data-i="' + i + '" value="' + t + '" aria-label="Orario ' + (i + 1) + '">' + (form.times.length > 1 ? '<button type="button" data-rm="' + i + '" aria-label="Togli orario">×</button>' : '') + '</div>').join("") + '</div>' +
-    (form.times.length < 4 ? '<button class="btn alt" type="button" id="add-time" style="min-height:48px">Aggiungi orario</button>' : '') + '</div>' +
-    '<div class="fld"><span>Giorni</span><div class="days">' + DAYS.map((d, i) => '<button type="button" data-day="' + i + '" aria-pressed="' + !!form.days[i] + '" aria-label="' + DAYN[i] + '">' + d + '</button>').join("") + '</div></div>' +
-    '<button class="btn" type="button" id="save">Salva</button>' +
-    (edit ? '<button class="btn alt" type="button" id="load">Porta lo scomparto al carico</button><button class="btn alt" type="button" id="test">Prova erogazione</button><button class="btn danger" type="button" id="del">Elimina medicina</button>' : '') +
-    '<button class="btn alt" type="button" id="cancel" style="border-color:var(--line);color:var(--muted)">Annulla</button></div>';
+  $("sheet").innerHTML = '<div class="sheet"><h2>' + (edit ? "Edit medicine" : "New medicine") + '</h2>' +
+    (hint ? '<div class="hint">Medicine saved. Select “Move slot to loading position”, add the pills, then update the quantity.</div>' : '') +
+    '<label class="fld"><span>Medicine name</span><input type="text" id="f-name" maxlength="30" value="' + esc(form.name) + '" placeholder="e.g. Aspirin"></label>' +
+    '<label class="fld"><span>Dispenser slot</span><select id="f-slot">' + freeSlots().map(n => '<option value="' + n + '"' + (n === form.slot ? ' selected' : '') + '>Slot ' + n + '</option>').join("") + '</select></label>' +
+    '<label class="fld"><span>Pills currently loaded</span><input type="number" id="f-stock" inputmode="numeric" min="0" max="200" value="' + form.stock + '"></label>' +
+    stepper("low", "Notify me when this many remain") + stepper("dose", "Pills per dose") +
+    '<label class="fld sw"><span>Requires water</span><input type="checkbox" id="f-water"' + (form.water ? ' checked' : '') + '></label>' +
+    '<div class="fld"><span>Schedule</span><div class="times">' + form.times.map((t, i) => '<div><input type="time" class="f-time" data-i="' + i + '" value="' + t + '" aria-label="Schedule time ' + (i + 1) + '">' + (form.times.length > 1 ? '<button type="button" data-rm="' + i + '" aria-label="Remove schedule time">×</button>' : '') + '</div>').join("") + '</div>' +
+    (form.times.length < 4 ? '<button class="btn alt" type="button" id="add-time" style="min-height:48px">Add time</button>' : '') + '</div>' +
+    '<div class="fld"><span>Days</span><div class="days">' + DAYS.map((d, i) => '<button type="button" data-day="' + i + '" aria-pressed="' + !!form.days[i] + '" aria-label="' + DAY_NAMES[i] + '">' + d + '</button>').join("") + '</div></div>' +
+    '<button class="btn" type="button" id="save">Save</button>' +
+    (edit ? '<button class="btn alt" type="button" id="load">Move slot to loading position</button><button class="btn alt" type="button" id="test">Test dose simulation</button><button class="btn danger" type="button" id="del">Delete medicine</button>' : '') +
+    '<button class="btn alt" type="button" id="cancel" style="border-color:var(--line);color:var(--muted)">Cancel</button></div>';
 }
 
 const sheet = $("sheet");
@@ -224,8 +224,8 @@ sheet.addEventListener("click", e => {
   else if(b.id === "add-time"){ form.times.push("12:00"); drawSheet(); }
   else if(b.id === "save") save();
   else if(b.id === "cancel") sheet.close();
-  else if(b.id === "load") act("POST", "/slots/" + form.slot + "/load", null, "Scomparto " + form.slot + " in posizione di carico. Inserisci le pillole e premi Salva.");
-  else if(b.id === "test") act("POST", "/dispense", {medicineId:form.id, test:true}, "Erogazione di prova: la pillola sta uscendo.");
+  else if(b.id === "load") act("POST", "/slots/" + form.slot + "/load", null, "Slot " + form.slot + " moved to loading position. Load the pills and save the new quantity.");
+  else if(b.id === "test") act("POST", "/dispense", {medicineId:form.id, test:true}, "Dose simulation complete. No pill was physically dispensed.");
   else if(b.id === "del") del();
 });
 sheet.addEventListener("input", e => {
@@ -238,45 +238,45 @@ sheet.addEventListener("input", e => {
 });
 
 async function act(method, path, body, ok){
-  try{ await api(method, path, body); toast(demo ? ok + " (prova)" : ok); }
-  catch(e){ toast("Il dispenser non risponde. Riprova."); }
+  try{ await api(method, path, body); toast(demo ? ok + " (demo)" : ok); }
+  catch(e){ toast("The dispenser is not responding. Try again."); }
 }
 async function save(){
   const f = form; f.name = f.name.trim();
-  if(f.name.length < 2) return toast("Scrivi il nome della medicina.");
-  if(f.times.some(t => !t)) return toast("Controlla gli orari.");
-  if(new Set(f.times).size !== f.times.length) return toast("Ci sono due orari uguali.");
-  if(!f.days.some(Boolean)) return toast("Scegli almeno un giorno.");
+  if(f.name.length < 2) return toast("Enter a medicine name.");
+  if(f.times.some(t => !t)) return toast("Check the scheduled times.");
+  if(new Set(f.times).size !== f.times.length) return toast("Duplicate schedule times are not allowed.");
+  if(!f.days.some(Boolean)) return toast("Select at least one day.");
   f.times.sort(); f.capacity = Math.max(f.capacity, f.stock);
   try{
     const isNew = f.id === null; let saved;
     if(isNew){ saved = await api("POST", "/medicines", f) || {...f, id:Date.now()}; meds.push(saved); }
     else{ saved = await api("PUT", "/medicines/" + f.id, f) || f; meds = meds.map(m => m.id === f.id ? saved : m); }
     render();
-    if(isNew){ openSheet(saved, true); } else { sheet.close(); toast("Salvato nel dispenser."); }
-  }catch(e){ toast("Non riesco a salvare. Riprova."); }
+    if(isNew){ openSheet(saved, true); } else { sheet.close(); toast("Saved to the dispenser."); }
+  }catch(e){ toast("Could not save the medicine. Try again."); }
 }
 async function del(){
-  if(!confirm("Eliminare " + form.name + "? Lo scomparto tornerà libero.")) return;
-  try{ await api("DELETE", "/medicines/" + form.id); meds = meds.filter(m => m.id !== form.id); sheet.close(); render(); toast("Medicina eliminata."); }
-  catch(e){ toast("Non riesco a eliminarla. Riprova."); }
+  if(!confirm("Delete " + form.name + "? This will free its slot.")) return;
+  try{ await api("DELETE", "/medicines/" + form.id); meds = meds.filter(m => m.id !== form.id); sheet.close(); render(); toast("Medicine deleted."); }
+  catch(e){ toast("Could not delete the medicine. Try again."); }
 }
 
 $("add").onclick = () => openSheet(null);
 $("list").onclick = e => { const c = e.target.closest(".card"); if(c) openSheet(meds.find(m => m.id == c.dataset.id)); };
 
-/* ---- profilo ---- */
+/* ---- Profile ---- */
 $("p-save").onclick = async () => {
-  const n = $("p-name").value.trim(); if(n.length < 2) return toast("Scrivi il tuo nome.");
-  try{ await api("PUT", "/profile", {name:n, notify:$("p-notify").value.trim()}); profile = {name:n, notify:$("p-notify").value.trim()}; toast("Profilo salvato."); }
-  catch(e){ toast("Non riesco a salvare. Riprova."); }
+  const n = $("p-name").value.trim(); if(n.length < 2) return toast("Enter your name.");
+  try{ await api("PUT", "/profile", {name:n, notify:$("p-notify").value.trim()}); profile = {name:n, notify:$("p-notify").value.trim()}; toast("Profile saved."); }
+  catch(e){ toast("Could not save your profile. Try again."); }
 };
 $("pin-save").onclick = async () => {
   const o = $("pin-old").value, n = $("pin-new").value;
-  if(!/^\d{4}$/.test(n)) return toast("Il nuovo PIN deve avere 4 cifre.");
-  if(/^(\d)\1{3}$/.test(n) || n === "1234" || n === "4321") return toast("PIN troppo facile. Scegline un altro.");
-  try{ await api("PUT", "/pin", {oldPin:o, newPin:n}); $("pin-old").value = $("pin-new").value = ""; toast("PIN cambiato."); }
-  catch(e){ toast(e.message === "403" ? "Il PIN attuale non è corretto." : "Non riesco a cambiare il PIN."); }
+  if(!/^\d{4}$/.test(n)) return toast("The new PIN must contain 4 digits.");
+  if(/^(\d)\1{3}$/.test(n) || n === "1234" || n === "4321") return toast("That PIN is too easy to guess. Choose another one.");
+  try{ await api("PUT", "/pin", {oldPin:o, newPin:n}); $("pin-old").value = $("pin-new").value = ""; toast("PIN changed."); }
+  catch(e){ toast(e.message === "403" ? "The current PIN is incorrect." : "Could not change the PIN."); }
 };
 $("logout").onclick = () => { try{ sessionStorage.removeItem("token"); }catch(e){} location.replace("index.html"); };
 

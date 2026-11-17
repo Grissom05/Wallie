@@ -1,461 +1,527 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <LittleFS.h>
+#include <WebServer.h>
+#include <WiFi.h>
+
+#include "alarm_manager.h"
+#include "storage.h"
+#include "wallie_types.h"
+#include "wifi_config.h"
+
+#include <algorithm>
 #include <vector>
-#include <time.h>
-#include <esp_sntp.h>
 
-// --- CREDENZIALI WI-FI ---
-const char* ssid = "D-Link-353462";
-const char* password = "JPLPMqjGmV";
-
-// --- IMPOSTAZIONI NTP (ITALIA) ---
-const char* ntpServer1 = "ntp1.inrim.it"; 
-const char* ntpServer2 = "pool.ntp.org";  
-const char* fusoOrarioItalia = "CET-1CEST,M3.5.0,M10.5.0/3";
-const uint32_t INTERVALLO_SYNC_NTP = 3600000UL; 
+namespace {
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
+constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 30000;
+constexpr char API_CONTENT_TYPE[] = "application/json";
+constexpr char SESSION_TOKEN[] = "esp32-secure-token";
 
 WebServer server(80);
-
-// --- STRUTTURE DATI ---
-struct Medicina {
-  unsigned long id;
-  String name;
-  int slot;
-  int stock;
-  int capacity;
-  int low;
-  int dose;
-  bool water;
-  std::vector<String> times;
-  std::vector<int> days; // 0=Lunedì, ..., 6=Domenica
-  bool giaSuonataOggi;
-};
-
-struct Profilo {
-  String name = "";
-  String notify = "";
-  String pin = "1234";
-  bool registrato = false;
-};
-
-struct DispenserState {
-  int slots = 3;       
-  String water = "ok"; 
-};
-
-Profilo profiloUtente;
+AlarmManager alarmManager;
+UserProfile userProfile;
 DispenserState dispenserState;
-std::vector<Medicina> listaMedicine;
+std::vector<Medicine> medicines;
+unsigned long lastWiFiRetryAt = 0;
 
-char ultimoSyncStr[16] = "In attesa...";
-volatile bool orologioSincronizzato = false;
+void sendError(int statusCode, const char* message) {
+  JsonDocument document;
+  document["error"] = message;
+  String response;
+  serializeJson(document, response);
+  server.send(statusCode, API_CONTENT_TYPE, response);
+}
 
-// --- GESTIONE ALLARME LED ---
-bool allarmeAttivo = false;
-bool statoLed = false;
-unsigned long inizioAllarmeMillis = 0;
-unsigned long ultimoBlinkMillis = 0;
-const unsigned long DURATA_ALLARME = 10000; 
-const unsigned long INTERVALLO_BLINK = 250; 
+bool parseRequestBody(JsonDocument& document) {
+  const DeserializationError error = deserializeJson(document, server.arg("plain"));
+  if (!error) {
+    return true;
+  }
 
-// --- INTERRUPT PULSANTE BOOT ---
-const int BOOT_BUTTON = 0;
-volatile bool fermaAllarmeFlag = false;
-volatile unsigned long ultimoInterruptMillis = 0;
+  Serial.printf("[API] Invalid JSON request body: %s.\n", error.c_str());
+  sendError(400, "Invalid JSON");
+  return false;
+}
 
-void IRAM_ATTR fermaAllarmeISR() {
-  unsigned long ora = millis();
-  if (ora - ultimoInterruptMillis > 200) {
-    fermaAllarmeFlag = true;
-    ultimoInterruptMillis = ora;
+bool saveCurrentConfig() {
+  if (saveConfig(userProfile, medicines)) {
+    return true;
+  }
+  sendError(500, "Could not save configuration");
+  return false;
+}
+
+void sendJsonDocument(JsonDocument& document, int statusCode = 200) {
+  String response;
+  serializeJson(document, response);
+  server.send(statusCode, API_CONTENT_TYPE, response);
+}
+
+bool isValidPin(const String& pin) {
+  if (pin.length() != 4) {
+    return false;
+  }
+  for (size_t index = 0; index < pin.length(); ++index) {
+    if (!isDigit(pin[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool isValidTime(const String& value) {
+  if (value.length() != 5 || value[2] != ':') {
+    return false;
+  }
+  for (size_t index = 0; index < value.length(); ++index) {
+    if (index != 2 && !isDigit(value[index])) {
+      return false;
+    }
+  }
+  const int hour = value.substring(0, 2).toInt();
+  const int minute = value.substring(3, 5).toInt();
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+}
+
+bool readMedicine(const JsonDocument& document, Medicine& medicine) {
+  if (!document["name"].is<const char*>() ||
+      !document["slot"].is<int>() ||
+      !document["stock"].is<int>() ||
+      !document["capacity"].is<int>() ||
+      !document["low"].is<int>() ||
+      !document["dose"].is<int>() ||
+      !document["water"].is<bool>() ||
+      !document["times"].is<JsonArrayConst>() ||
+      !document["days"].is<JsonArrayConst>()) {
+    sendError(400, "Missing or invalid medicine fields");
+    return false;
+  }
+
+  const String name = document["name"].as<String>();
+  const int slot = document["slot"].as<int>();
+  const int stock = document["stock"].as<int>();
+  const int capacity = document["capacity"].as<int>();
+  const int lowStockThreshold = document["low"].as<int>();
+  const int dose = document["dose"].as<int>();
+  const JsonArrayConst times = document["times"].as<JsonArrayConst>();
+  const JsonArrayConst days = document["days"].as<JsonArrayConst>();
+
+  if (name.length() < 2 || name.length() > 30 ||
+      slot < 1 || slot > dispenserState.slots ||
+      stock < 0 || stock > 200 || capacity < stock || capacity > 200 ||
+      lowStockThreshold < 0 || lowStockThreshold > 50 || dose < 1 || dose > 4 ||
+      times.size() < 1 || times.size() > 4 || days.size() != 7) {
+    sendError(400, "Medicine fields are outside the allowed range");
+    return false;
+  }
+
+  Medicine parsed;
+  parsed.name = name;
+  parsed.slot = static_cast<uint8_t>(slot);
+  parsed.stock = static_cast<uint16_t>(stock);
+  parsed.capacity = static_cast<uint16_t>(capacity);
+  parsed.lowStockThreshold = static_cast<uint8_t>(lowStockThreshold);
+  parsed.dose = static_cast<uint8_t>(dose);
+  parsed.requiresWater = document["water"].as<bool>();
+
+  for (JsonVariantConst value : times) {
+    if (!value.is<const char*>()) {
+      sendError(400, "Invalid medicine schedule");
+      return false;
+    }
+    const String time = value.as<String>();
+    if (!isValidTime(time) ||
+        std::find(parsed.times.begin(), parsed.times.end(), time) != parsed.times.end()) {
+      sendError(400, "Invalid or duplicate medicine schedule");
+      return false;
+    }
+    parsed.times.push_back(time);
+  }
+
+  bool hasScheduledDay = false;
+  for (JsonVariantConst value : days) {
+    if (!value.is<int>() || (value.as<int>() != 0 && value.as<int>() != 1)) {
+      sendError(400, "Invalid medicine schedule");
+      return false;
+    }
+    const uint8_t enabled = static_cast<uint8_t>(value.as<int>());
+    parsed.days.push_back(enabled);
+    hasScheduledDay = hasScheduledDay || enabled == 1;
+  }
+  if (!hasScheduledDay) {
+    sendError(400, "Select at least one scheduled day");
+    return false;
+  }
+
+  medicine = parsed;
+  return true;
+}
+
+bool isSlotAvailable(uint8_t slot, uint32_t excludedMedicineId = 0) {
+  return std::none_of(medicines.begin(), medicines.end(),
+                      [slot, excludedMedicineId](const Medicine& medicine) {
+                        return medicine.slot == slot && medicine.id != excludedMedicineId;
+                      });
+}
+
+void appendMedicine(JsonObject object, const Medicine& medicine) {
+  object["id"] = medicine.id;
+  object["name"] = medicine.name;
+  object["slot"] = medicine.slot;
+  object["stock"] = medicine.stock;
+  object["capacity"] = medicine.capacity;
+  object["low"] = medicine.lowStockThreshold;
+  object["dose"] = medicine.dose;
+  object["water"] = medicine.requiresWater;
+
+  JsonArray times = object["times"].to<JsonArray>();
+  for (const String& time : medicine.times) {
+    times.add(time);
+  }
+  JsonArray days = object["days"].to<JsonArray>();
+  for (uint8_t day : medicine.days) {
+    days.add(day);
   }
 }
 
-void avviaAllarme() {
-  allarmeAttivo = true;
-  inizioAllarmeMillis = millis();
-  ultimoBlinkMillis = millis();
-  statoLed = true;
-  rgbLedWrite(RGB_BUILTIN, 255, 0, 100);
-  Serial.println("\n[ALARM] Allarme attivato! LED RGB in lampeggio per 10 secondi.");
-}
-
-void spegniAllarme() {
-  allarmeAttivo = false;
-  statoLed = false;
-  rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
-  Serial.println("[ALARM] Allarme terminato. LED spento.");
-}
-
-void callbackSincronizzazioneNTP(struct timeval *tv) {
-  orologioSincronizzato = true;
-  time_t now = time(nullptr);
-  struct tm* t = localtime(&now);
-  snprintf(ultimoSyncStr, sizeof(ultimoSyncStr), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
-  Serial.printf("\n[NTP] Orario sincronizzato: %s\n", ultimoSyncStr);
-}
-
-// ==========================================
-// PERSISTENZA DEI DATI (LittleFS)
-// ==========================================
-void salvaDati() {
-  JsonDocument doc;
-  
-  doc["prof"]["name"] = profiloUtente.name;
-  doc["prof"]["notify"] = profiloUtente.notify;
-  doc["prof"]["pin"] = profiloUtente.pin;
-  doc["prof"]["reg"] = profiloUtente.registrato;
-
-  JsonArray meds = doc["meds"].to<JsonArray>();
-  for (auto& m : listaMedicine) {
-    JsonObject obj = meds.add<JsonObject>();
-    obj["id"] = m.id;
-    obj["name"] = m.name;
-    obj["slot"] = m.slot;
-    obj["stock"] = m.stock;
-    obj["capacity"] = m.capacity;
-    obj["low"] = m.low;
-    obj["dose"] = m.dose;
-    obj["water"] = m.water;
-    
-    JsonArray tArr = obj["times"].to<JsonArray>();
-    for (auto& t : m.times) tArr.add(t);
-    
-    JsonArray dArr = obj["days"].to<JsonArray>();
-    for (auto& d : m.days) dArr.add(d);
-  }
-
-  File file = LittleFS.open("/config.json", "w");
-  if (file) {
-    serializeJson(doc, file);
-    file.close();
-    Serial.println("[FS] Dati salvati con successo in /config.json");
-  } else {
-    Serial.println("[FS] ERRORE: Impossibile scrivere su /config.json");
-  }
-}
-
-void caricaDati() {
-  File file = LittleFS.open("/config.json", "r");
-  if (!file) {
-    Serial.println("[FS] Nessun file /config.json trovato. Uso i default.");
-    return; 
-  }
-
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, file);
-  file.close();
-  
-  if (err) {
-    Serial.printf("[FS] ERRORE deserializzazione JSON: %s\n", err.c_str());
-    return;
-  }
-
-  profiloUtente.name = doc["prof"]["name"].as<String>();
-  profiloUtente.notify = doc["prof"]["notify"].as<String>();
-  profiloUtente.pin = doc["prof"]["pin"].as<String>();
-  profiloUtente.registrato = doc["prof"]["reg"].as<bool>();
-
-  listaMedicine.clear();
-  JsonArray medsArray = doc["meds"].as<JsonArray>();
-  
-  for (JsonObject obj : medsArray) {
-    Medicina m;
-    m.id = obj["id"].as<unsigned long>();
-    m.name = obj["name"].as<String>();
-    m.slot = obj["slot"].as<int>();
-    m.stock = obj["stock"].as<int>();
-    m.capacity = obj["capacity"].as<int>();
-    m.low = obj["low"].as<int>();
-    m.dose = obj["dose"].as<int>();
-    m.water = obj["water"].as<bool>();
-    
-    JsonArray timesArray = obj["times"].as<JsonArray>();
-    for (JsonVariant v : timesArray) m.times.push_back(v.as<String>());
-    
-    JsonArray daysArray = obj["days"].as<JsonArray>();
-    for (JsonVariant v : daysArray) m.days.push_back(v.as<int>());
-    
-    m.giaSuonataOggi = false;
-    listaMedicine.push_back(m);
-  }
-  
-  Serial.printf("[FS] Dati caricati. Utente: %s | Medicine in memoria: %d\n", profiloUtente.name.c_str(), listaMedicine.size());
-}
-
-// ==========================================
-// ROTTE FISSE API
-// ==========================================
-void handleApiProfileGet() {
+void handleGetProfile() {
   Serial.println("[API] GET /api/profile");
-  if (!profiloUtente.registrato) {
-    Serial.println("  -> 404 Utente non registrato");
-    server.send(404, "application/json", "{\"error\":\"Not registered\"}");
+  if (!userProfile.registered) {
+    sendError(404, "Not registered");
     return;
   }
-  JsonDocument doc;
-  doc["name"] = profiloUtente.name;
-  doc["notify"] = profiloUtente.notify;
-  String res; 
-  serializeJson(doc, res);
-  server.send(200, "application/json", res);
+
+  JsonDocument document;
+  document["name"] = userProfile.name;
+  document["notify"] = userProfile.notify;
+  sendJsonDocument(document);
 }
 
-void handleApiProfilePut() {
+void handlePutProfile() {
   Serial.println("[API] PUT /api/profile");
-  JsonDocument doc;
-  deserializeJson(doc, server.arg("plain"));
-  
-  if (doc["name"].is<String>()) profiloUtente.name = doc["name"].as<String>();
-  if (doc["notify"].is<String>()) profiloUtente.notify = doc["notify"].as<String>();
-  
-  Serial.printf("  -> Profilo aggiornato: Nome='%s', Notify='%s'\n", profiloUtente.name.c_str(), profiloUtente.notify.c_str());
-  salvaDati();
-  server.send(200, "application/json", "{\"status\":\"ok\"}");
+  JsonDocument document;
+  if (!parseRequestBody(document)) {
+    return;
+  }
+  if (!document["name"].is<const char*>() || !document["notify"].is<const char*>()) {
+    sendError(400, "Invalid profile fields");
+    return;
+  }
+
+  const String name = document["name"].as<String>();
+  if (name.length() < 2 || name.length() > 24) {
+    sendError(400, "Name must contain 2 to 24 characters");
+    return;
+  }
+
+  userProfile.name = name;
+  userProfile.notify = document["notify"].as<String>();
+  Serial.printf("[API] Profile updated for '%s'.\n", userProfile.name.c_str());
+  if (saveCurrentConfig()) {
+    server.send(200, API_CONTENT_TYPE, "{\"status\":\"ok\"}");
+  }
 }
 
-void handleApiLogin() {
+void handleLogin() {
   Serial.println("[API] POST /api/login");
-  JsonDocument doc;
-  deserializeJson(doc, server.arg("plain"));
-  
-  String attemptedPin = doc["pin"].as<String>();
-  if (profiloUtente.registrato && attemptedPin == profiloUtente.pin) {
-    Serial.println("  -> Accesso CONSENTITO");
-    server.send(200, "application/json", "{\"token\":\"esp32-secure-token\"}");
+  JsonDocument document;
+  if (!parseRequestBody(document)) {
+    return;
+  }
+  if (!document["pin"].is<const char*>()) {
+    sendError(400, "PIN is required");
+    return;
+  }
+
+  if (userProfile.registered && document["pin"].as<String>() == userProfile.pin) {
+    Serial.println("[API] Login accepted.");
+    JsonDocument response;
+    response["token"] = SESSION_TOKEN;
+    sendJsonDocument(response);
   } else {
-    Serial.println("  -> Accesso NEGATO (PIN errato)");
-    server.send(403, "application/json", "{\"error\":\"Wrong PIN\"}");
+    Serial.println("[API] Login rejected.");
+    sendError(403, "Wrong PIN");
   }
 }
 
-void handleApiRegister() {
+void handleRegister() {
   Serial.println("[API] POST /api/register");
-  JsonDocument doc;
-  deserializeJson(doc, server.arg("plain"));
-  
-  profiloUtente.name = doc["name"].as<String>();
-  profiloUtente.pin = doc["pin"].as<String>();
-  profiloUtente.registrato = true;
-  
-  Serial.printf("  -> Nuovo utente registrato: %s\n", profiloUtente.name.c_str());
-  salvaDati();
-  server.send(200, "application/json", "{\"token\":\"esp32-secure-token\"}");
+  if (userProfile.registered) {
+    sendError(409, "Already registered");
+    return;
+  }
+
+  JsonDocument document;
+  if (!parseRequestBody(document)) {
+    return;
+  }
+  if (!document["name"].is<const char*>() || !document["pin"].is<const char*>()) {
+    sendError(400, "Name and PIN are required");
+    return;
+  }
+
+  const String name = document["name"].as<String>();
+  const String pin = document["pin"].as<String>();
+  if (name.length() < 2 || name.length() > 24 || !isValidPin(pin)) {
+    sendError(400, "Invalid name or PIN");
+    return;
+  }
+
+  userProfile.name = name;
+  userProfile.pin = pin;
+  userProfile.registered = true;
+  Serial.printf("[API] Registered user '%s'.\n", userProfile.name.c_str());
+  if (saveCurrentConfig()) {
+    JsonDocument response;
+    response["token"] = SESSION_TOKEN;
+    sendJsonDocument(response);
+  }
 }
 
-void handleApiPinPut() {
+void handlePutPin() {
   Serial.println("[API] PUT /api/pin");
-  JsonDocument doc;
-  deserializeJson(doc, server.arg("plain"));
-  
-  if (doc["oldPin"].as<String>() == profiloUtente.pin) {
-    profiloUtente.pin = doc["newPin"].as<String>();
-    Serial.println("  -> PIN modificato con successo");
-    salvaDati();
-    server.send(200, "application/json", "{\"status\":\"ok\"}");
-  } else {
-    Serial.println("  -> Cambio PIN negato (vecchio PIN errato)");
-    server.send(403, "application/json", "{\"error\":\"Wrong PIN\"}");
+  JsonDocument document;
+  if (!parseRequestBody(document)) {
+    return;
+  }
+  if (!document["oldPin"].is<const char*>() || !document["newPin"].is<const char*>()) {
+    sendError(400, "Current and new PIN are required");
+    return;
+  }
+
+  if (document["oldPin"].as<String>() != userProfile.pin) {
+    sendError(403, "Wrong PIN");
+    return;
+  }
+
+  const String newPin = document["newPin"].as<String>();
+  if (!isValidPin(newPin)) {
+    sendError(400, "PIN must contain four digits");
+    return;
+  }
+
+  userProfile.pin = newPin;
+  Serial.println("[API] PIN updated.");
+  if (saveCurrentConfig()) {
+    server.send(200, API_CONTENT_TYPE, "{\"status\":\"ok\"}");
   }
 }
 
-void handleApiState() {
+void handleGetState() {
   Serial.println("[API] GET /api/state");
-  JsonDocument doc;
-  doc["slots"] = dispenserState.slots;
-  doc["water"] = dispenserState.water;
-  String res; serializeJson(doc, res);
-  server.send(200, "application/json", res);
+  JsonDocument document;
+  document["slots"] = dispenserState.slots;
+  document["water"] = dispenserState.water;
+  sendJsonDocument(document);
 }
 
-void handleApiGetMedicines() {
+void handleGetMedicines() {
   Serial.println("[API] GET /api/medicines");
-  JsonDocument doc;
-  JsonArray arr = doc.to<JsonArray>();
-  for (auto& m : listaMedicine) {
-    JsonObject obj = arr.add<JsonObject>();
-    obj["id"] = m.id;
-    obj["name"] = m.name;
-    obj["slot"] = m.slot;
-    obj["stock"] = m.stock;
-    obj["capacity"] = m.capacity;
-    obj["low"] = m.low;
-    obj["dose"] = m.dose;
-    obj["water"] = m.water;
-    
-    JsonArray tArr = obj["times"].to<JsonArray>();
-    for (auto& t : m.times) tArr.add(t);
-    
-    JsonArray dArr = obj["days"].to<JsonArray>();
-    for (auto& d : m.days) dArr.add(d);
+  JsonDocument document;
+  JsonArray array = document.to<JsonArray>();
+  for (const Medicine& medicine : medicines) {
+    appendMedicine(array.add<JsonObject>(), medicine);
   }
-  String res; 
-  serializeJson(doc, res);
-  server.send(200, "application/json", res);
+  sendJsonDocument(document);
 }
 
-void handleApiAddMedicine() {
-  Serial.println("[API] POST /api/medicines (Aggiunta)");
-  JsonDocument doc;
-  deserializeJson(doc, server.arg("plain"));
-  
-  Medicina m;
-  m.id = millis(); // Genera ID casuale basato su uptime
-  m.name = doc["name"].as<String>();
-  m.slot = doc["slot"].as<int>();
-  m.stock = doc["stock"].as<int>();
-  m.capacity = doc["capacity"].as<int>();
-  m.low = doc["low"].as<int>();
-  m.dose = doc["dose"].as<int>();
-  m.water = doc["water"].as<bool>();
-  
-  JsonArray timesArray = doc["times"].as<JsonArray>();
-  for (JsonVariant v : timesArray) m.times.push_back(v.as<String>());
-  
-  JsonArray daysArray = doc["days"].as<JsonArray>();
-  for (JsonVariant v : daysArray) m.days.push_back(v.as<int>());
-  
-  m.giaSuonataOggi = false;
+void handleAddMedicine() {
+  Serial.println("[API] POST /api/medicines");
+  JsonDocument document;
+  if (!parseRequestBody(document)) {
+    return;
+  }
 
-  listaMedicine.push_back(m);
-  
-  Serial.printf("  -> Aggiunta medicina: '%s' in slot %d (ID: %lu)\n", m.name.c_str(), m.slot, m.id);
-  salvaDati();
+  Medicine medicine;
+  if (!readMedicine(document, medicine)) {
+    return;
+  }
+  if (!isSlotAvailable(medicine.slot)) {
+    sendError(409, "Slot is already occupied");
+    return;
+  }
 
-  doc["id"] = m.id; 
-  String res; 
-  serializeJson(doc, res);
-  server.send(200, "application/json", res);
+  uint32_t nextId = 1;
+  for (const Medicine& existing : medicines) {
+    nextId = std::max(nextId, existing.id + 1);
+  }
+  medicine.id = nextId;
+  medicines.push_back(medicine);
+  Serial.printf("[API] Added '%s' in slot %u (ID: %lu).\n",
+                medicine.name.c_str(), medicine.slot,
+                static_cast<unsigned long>(medicine.id));
+
+  if (!saveCurrentConfig()) {
+    medicines.pop_back();
+    return;
+  }
+
+  JsonDocument response;
+  appendMedicine(response.to<JsonObject>(), medicines.back());
+  sendJsonDocument(response);
 }
 
-void handleApiDispense() {
-  Serial.println("[API] POST /api/dispense (Test erogazione manuale)");
-  server.send(200, "application/json", "{\"status\":\"dispensed\"}");
+void handleDispenseTest() {
+  Serial.println("[API] POST /api/dispense");
+  JsonDocument document;
+  if (!parseRequestBody(document)) {
+    return;
+  }
+  if (!document["medicineId"].is<uint32_t>()) {
+    sendError(400, "Medicine ID is required");
+    return;
+  }
+
+  const uint32_t medicineId = document["medicineId"].as<uint32_t>();
+  const auto medicine = std::find_if(
+      medicines.begin(), medicines.end(),
+      [medicineId](const Medicine& item) { return item.id == medicineId; });
+  if (medicine == medicines.end()) {
+    sendError(404, "Medicine not found");
+    return;
+  }
+
+  alarmManager.simulateDose(*medicine, "manual test");
+  server.send(200, API_CONTENT_TYPE, "{\"status\":\"simulated\"}");
 }
 
-// ==========================================
-// DISPATCHER ROTTE DINAMICHE
-// ==========================================
-void handleNotFound() {
-  String uri = server.uri();
-  
-  // POST /api/slots/<slot>/load
-  if (server.method() == HTTP_POST && uri.startsWith("/api/slots/") && uri.endsWith("/load")) {
-    Serial.printf("[API] POST %s (Richiesta carico slot)\n", uri.c_str());
+bool parsePathId(const String& path, uint32_t& id) {
+  const size_t prefixLength = String("/api/medicines/").length();
+  if (path.length() <= prefixLength) {
+    return false;
+  }
+
+  const String idText = path.substring(prefixLength);
+  for (size_t index = 0; index < idText.length(); ++index) {
+    if (!isDigit(idText[index])) {
+      return false;
+    }
+  }
+  id = static_cast<uint32_t>(strtoul(idText.c_str(), nullptr, 10));
+  return id != 0;
+}
+
+void handleDynamicRoute() {
+  const String uri = server.uri();
+  if (server.method() == HTTP_POST && uri.startsWith("/api/slots/") &&
+      uri.endsWith("/load")) {
+    const String slotText = uri.substring(11, uri.length() - 5);
+    const int slot = slotText.toInt();
+    if (slotText.length() == 0 || slot < 1 || slot > dispenserState.slots) {
+      sendError(400, "Invalid slot");
+      return;
+    }
+    Serial.printf("[API] Slot %d moved to the loading position.\n", slot);
     server.send(204, "text/plain", "");
     return;
   }
-  
-  // PUT o DELETE /api/medicines/<id>
-  if (uri.startsWith("/api/medicines/")) {
-    unsigned long targetId = uri.substring(15).toInt();
 
-    // Modifica Medicina
-    if (server.method() == HTTP_PUT) {
-      Serial.printf("[API] PUT %s (Modifica medicina ID: %lu)\n", uri.c_str(), targetId);
-      JsonDocument doc;
-      deserializeJson(doc, server.arg("plain"));
-      for (auto& m : listaMedicine) {
-        if (m.id == targetId) {
-          m.name = doc["name"].as<String>();
-          m.slot = doc["slot"].as<int>();
-          m.stock = doc["stock"].as<int>();
-          m.capacity = doc["capacity"].as<int>();
-          m.low = doc["low"].as<int>();
-          m.dose = doc["dose"].as<int>();
-          m.water = doc["water"].as<bool>();
-          
-          m.times.clear();
-          JsonArray timesArray = doc["times"].as<JsonArray>();
-          for (JsonVariant v : timesArray) m.times.push_back(v.as<String>());
-          
-          m.days.clear();
-          JsonArray daysArray = doc["days"].as<JsonArray>();
-          for (JsonVariant v : daysArray) m.days.push_back(v.as<int>());
-          
-          Serial.printf("  -> Modificata medicina: '%s' (Slot %d)\n", m.name.c_str(), m.slot);
-          salvaDati();
-          server.send(200, "application/json", server.arg("plain"));
-          return;
-        }
-      }
-    }
-    
-    // Elimina Medicina
-    if (server.method() == HTTP_DELETE) {
-      Serial.printf("[API] DELETE %s (Eliminazione medicina ID: %lu)\n", uri.c_str(), targetId);
-      for (size_t i = 0; i < listaMedicine.size(); i++) {
-        if (listaMedicine[i].id == targetId) {
-          Serial.printf("  -> Eliminata medicina: '%s'\n", listaMedicine[i].name.c_str());
-          listaMedicine.erase(listaMedicine.begin() + i);
-          salvaDati();
-          server.send(204, "text/plain", "");
-          return;
-        }
-      }
-    }
-  }
-
-  Serial.printf("[API] ERRORE 404: Route non trovata -> %s\n", uri.c_str());
-  server.send(404, "application/json", "{\"error\":\"Not Found\"}");
-}
-
-// ==========================================
-// SETUP & LOOP
-// ==========================================
-void setup() {
-  setCpuFrequencyMhz(80);
-  Serial.begin(115200);
-  delay(1000);
-  Serial.println("\n\n--- AVVIO WALLIE DISPENSER ---");
-
-  pinMode(BOOT_BUTTON, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(BOOT_BUTTON), fermaAllarmeISR, FALLING);
-  rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
-
-  if (!LittleFS.begin(true)) {
-    Serial.println("[SYSTEM] Errore montaggio LittleFS!");
+  if (!uri.startsWith("/api/medicines/")) {
+    sendError(404, "Not found");
     return;
   }
 
-  // --- LOGICA DI FACTORY RESET HARDWARE ---
-  // Controlla se il pulsante BOOT è premuto all'avvio
-  if (digitalRead(BOOT_BUTTON) == LOW) {
-    Serial.println("[SYSTEM] FACTORY RESET RICHIESTO! Formattazione in corso...");
-    LittleFS.remove("/config.json");
-    
-    // Fai lampeggiare il LED di rosso per dare un feedback visivo dell'avvenuto reset
-    for(int i = 0; i < 5; i++) {
-      rgbLedWrite(RGB_BUILTIN, 255, 0, 0); delay(200);
-      rgbLedWrite(RGB_BUILTIN, 0, 0, 0); delay(200);
-    }
-    Serial.println("[SYSTEM] Reset completato. Riavvia la scheda o rilascia il pulsante.");
-    
-    // Blocca l'esecuzione finché non si resetta fisicamente la scheda
-    while(true) { delay(100); } 
+  uint32_t targetId = 0;
+  if (!parsePathId(uri, targetId)) {
+    sendError(400, "Invalid medicine ID");
+    return;
   }
-  // -----------------------------------------
-  
-  caricaDati();
+  const auto medicine = std::find_if(
+      medicines.begin(), medicines.end(),
+      [targetId](const Medicine& item) { return item.id == targetId; });
+  if (medicine == medicines.end()) {
+    sendError(404, "Medicine not found");
+    return;
+  }
 
+  if (server.method() == HTTP_PUT) {
+    JsonDocument document;
+    if (!parseRequestBody(document)) {
+      return;
+    }
+
+    Medicine updated;
+    if (!readMedicine(document, updated)) {
+      return;
+    }
+    if (!isSlotAvailable(updated.slot, targetId)) {
+      sendError(409, "Slot is already occupied");
+      return;
+    }
+
+    updated.id = targetId;
+    updated.lastTriggeredOccurrence = medicine->lastTriggeredOccurrence;
+    const Medicine previous = *medicine;
+    *medicine = updated;
+    if (!saveCurrentConfig()) {
+      *medicine = previous;
+      return;
+    }
+
+    JsonDocument response;
+    appendMedicine(response.to<JsonObject>(), *medicine);
+    sendJsonDocument(response);
+    Serial.printf("[API] Updated medicine ID %lu.\n",
+                  static_cast<unsigned long>(targetId));
+    return;
+  }
+
+  if (server.method() == HTTP_DELETE) {
+    const size_t index = static_cast<size_t>(medicine - medicines.begin());
+    const Medicine removed = *medicine;
+    medicines.erase(medicine);
+    if (!saveCurrentConfig()) {
+      medicines.insert(medicines.begin() + index, removed);
+      return;
+    }
+    Serial.printf("[API] Deleted '%s' (ID: %lu).\n",
+                  removed.name.c_str(), static_cast<unsigned long>(targetId));
+    server.send(204, "text/plain", "");
+    return;
+  }
+
+  sendError(405, "Method not allowed");
+}
+
+void handleNotFound() {
+  Serial.printf("[API] Route not found: %s.\n", server.uri().c_str());
+  handleDynamicRoute();
+}
+
+void connectToWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(true); 
-  WiFi.begin(ssid, password);
-  Serial.printf("[WIFI] Connessione a %s ", ssid);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+  WiFi.setSleep(true);
+  WiFi.begin(WALLIE_WIFI_SSID, WALLIE_WIFI_PASSWORD);
+  Serial.println("[WIFI] Connecting to the configured Wi-Fi network.");
+
+  const unsigned long startedAt = millis();
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - startedAt < WIFI_CONNECT_TIMEOUT_MS) {
+    delay(250);
     Serial.print(".");
   }
-  Serial.printf("\n[WIFI] IP Dispenser: http://%s\n", WiFi.localIP().toString().c_str());
 
-  sntp_set_sync_interval(INTERVALLO_SYNC_NTP); 
-  sntp_set_time_sync_notification_cb(callbackSincronizzazioneNTP); 
-  configTzTime(fusoOrarioItalia, ntpServer1, ntpServer2);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[WIFI] Dispenser address: http://%s\n",
+                  WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\n[WIFI] Connection timed out; retrying in the background.");
+    lastWiFiRetryAt = millis();
+  }
+}
 
-  // Mappatura file statici
+void retryWiFiIfNeeded() {
+  if (WiFi.status() == WL_CONNECTED ||
+      millis() - lastWiFiRetryAt < WIFI_RETRY_INTERVAL_MS) {
+    return;
+  }
+  lastWiFiRetryAt = millis();
+  Serial.println("[WIFI] Retrying the Wi-Fi connection.");
+  WiFi.reconnect();
+}
+
+void registerRoutes() {
   server.serveStatic("/", LittleFS, "/index.html");
   server.serveStatic("/index.html", LittleFS, "/index.html");
   server.serveStatic("/register.html", LittleFS, "/register.html");
@@ -463,80 +529,69 @@ void setup() {
   server.serveStatic("/favicon.png", LittleFS, "/favicon.png");
   server.serveStatic("/logo.png", LittleFS, "/logo.png");
 
-  // Mappatura API fisse
-  server.on("/api/profile", HTTP_GET, handleApiProfileGet);
-  server.on("/api/profile", HTTP_PUT, handleApiProfilePut);
-  server.on("/api/login", HTTP_POST, handleApiLogin);
-  server.on("/api/register", HTTP_POST, handleApiRegister);
-  server.on("/api/state", HTTP_GET, handleApiState);
-  server.on("/api/medicines", HTTP_GET, handleApiGetMedicines);
-  server.on("/api/medicines", HTTP_POST, handleApiAddMedicine);
-  server.on("/api/pin", HTTP_PUT, handleApiPinPut);
-  server.on("/api/dispense", HTTP_POST, handleApiDispense);
-  
-  // Mappatura API dinamiche
+  server.on("/api/profile", HTTP_GET, handleGetProfile);
+  server.on("/api/profile", HTTP_PUT, handlePutProfile);
+  server.on("/api/login", HTTP_POST, handleLogin);
+  server.on("/api/register", HTTP_POST, handleRegister);
+  server.on("/api/state", HTTP_GET, handleGetState);
+  server.on("/api/medicines", HTTP_GET, handleGetMedicines);
+  server.on("/api/medicines", HTTP_POST, handleAddMedicine);
+  server.on("/api/pin", HTTP_PUT, handlePutPin);
+  server.on("/api/dispense", HTTP_POST, handleDispenseTest);
   server.onNotFound(handleNotFound);
+}
 
+void factoryResetIfRequested() {
+  if (digitalRead(0) != LOW) {
+    return;
+  }
+
+  Serial.println("[SYSTEM] Factory reset requested; removing saved configuration.");
+  if (!LittleFS.remove("/config.json")) {
+    Serial.println("[SYSTEM] No saved configuration was removed.");
+  }
+  for (uint8_t blink = 0; blink < 5; ++blink) {
+    rgbLedWrite(RGB_BUILTIN, 255, 0, 0);
+    delay(200);
+    rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
+    delay(200);
+  }
+  Serial.println("[SYSTEM] Factory reset completed. Restart the board.");
+  while (true) {
+    delay(100);
+  }
+}
+}  // namespace
+
+void setup() {
+  setCpuFrequencyMhz(80);
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n\n--- WALLIE DISPENSER STARTING ---");
+
+  pinMode(0, INPUT_PULLUP);
+  rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
+  if (!LittleFS.begin(true)) {
+    Serial.println("[SYSTEM] Failed to mount LittleFS; setup cannot continue.");
+    return;
+  }
+
+  factoryResetIfRequested();
+  if (!loadConfig(userProfile, medicines)) {
+    Serial.println("[SYSTEM] Configuration could not be loaded; defaults remain active.");
+  }
+
+  connectToWiFi();
+  alarmManager.begin();
+  registerRoutes();
   server.begin();
-  Serial.println("[SYSTEM] Web Server avviato e in ascolto.");
+  Serial.println("[SYSTEM] Web server started.");
 }
 
 void loop() {
   server.handleClient();
-  unsigned long oraMillis = millis();
-
-  if (fermaAllarmeFlag) {
-    fermaAllarmeFlag = false;
-    if (allarmeAttivo) {
-      Serial.println("[INTERRUPT] Pulsante BOOT premuto. Interruzione manuale!");
-      spegniAllarme();
-    }
-  }
-
-  // Controllo schedulazione sveglie
-  if (orologioSincronizzato) {
-    time_t now = time(nullptr);
-    struct tm* t = localtime(&now);
-    
-    char bufferOraCorrente[6];
-    snprintf(bufferOraCorrente, sizeof(bufferOraCorrente), "%02d:%02d", t->tm_hour, t->tm_min);
-
-    for (size_t i = 0; i < listaMedicine.size(); i++) {
-      bool orarioTrovato = false;
-      for (const String& oraMed : listaMedicine[i].times) {
-        if (oraMed == String(bufferOraCorrente)) {
-          orarioTrovato = true;
-          break;
-        }
-      }
-
-      if (orarioTrovato) {
-        if (!listaMedicine[i].giaSuonataOggi) {
-          int wday = (t->tm_wday == 0) ? 6 : t->tm_wday - 1;
-          
-          if (listaMedicine[i].days[wday] == 1) {
-            Serial.printf("[ALARM] Scaduto orario %s per medicina: %s\n", bufferOraCorrente, listaMedicine[i].name.c_str());
-            listaMedicine[i].giaSuonataOggi = true;
-            avviaAllarme();
-          }
-        }
-      } else {
-        listaMedicine[i].giaSuonataOggi = false;
-      }
-    }
-  }
-
-  // Blink hardware non bloccante
-  if (allarmeAttivo) {
-    if (oraMillis - inizioAllarmeMillis >= DURATA_ALLARME) {
-      spegniAllarme();
-    } else if (oraMillis - ultimoBlinkMillis >= INTERVALLO_BLINK) {
-      ultimoBlinkMillis = oraMillis;
-      statoLed = !statoLed;
-      if (statoLed) rgbLedWrite(RGB_BUILTIN, 255, 0, 100); 
-      else rgbLedWrite(RGB_BUILTIN, 0, 0, 0);     
-    }
-  }
-
-  delay(2); 
+  retryWiFiIfNeeded();
+  alarmManager.checkSchedules(medicines);
+  alarmManager.update();
+  delay(2);
 }
