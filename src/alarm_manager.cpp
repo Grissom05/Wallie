@@ -6,8 +6,8 @@
 
 namespace {
 constexpr uint8_t BOOT_BUTTON_PIN = 0;
+constexpr uint8_t ALARM_LED_BRIGHTNESS = 32;
 constexpr uint32_t ALARM_DURATION_MS = 10000;
-constexpr uint32_t LED_BLINK_INTERVAL_MS = 250;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 200;
 constexpr uint32_t NTP_SYNC_INTERVAL_MS = 3600000;
 constexpr char NTP_SERVER_PRIMARY[] = "ntp1.inrim.it";
@@ -108,10 +108,6 @@ void AlarmManager::update() {
   const unsigned long now = millis();
   if (now - alarmStartedAt_ >= ALARM_DURATION_MS) {
     stopAlarm();
-  } else if (now - lastBlinkAt_ >= LED_BLINK_INTERVAL_MS) {
-    lastBlinkAt_ = now;
-    ledOn_ = !ledOn_;
-    rgbLedWrite(RGB_BUILTIN, ledOn_ ? 255 : 0, 0, ledOn_ ? 100 : 0);
   }
 }
 
@@ -121,26 +117,47 @@ void AlarmManager::simulateDose(const Medicine& medicine, const char* reason) {
       "(%s). No motor is connected; stock was not changed.\n",
       medicine.dose, medicine.name.c_str(), medicine.slot,
       medicine.requiresWater ? "with" : "without", reason);
-  startAlarm();
+  startAlarm(medicine.slot);
 }
 
-void AlarmManager::startAlarm() {
+void AlarmManager::startAlarm(uint8_t slot) {
+  if (slot < 1 || slot > 3) {
+    Serial.printf("[ALARM] Cannot encode invalid slot %u.\n", slot);
+    return;
+  }
+
+  if (alarmActive_ && millis() - alarmStartedAt_ >= ALARM_DURATION_MS) {
+    stopAlarm();
+  }
+
+  const uint8_t previousSlotMask = activeSlotMask_;
+  activeSlotMask_ |= static_cast<uint8_t>(1U << (slot - 1));
   if (alarmActive_) {
-    Serial.println("[ALARM] Alarm is already active.");
+    if (activeSlotMask_ != previousSlotMask) {
+      Serial.printf("[ALARM] Added slot %u to the active alarm (slot mask: 0x%02X).\n",
+                    slot, activeSlotMask_);
+      updateLedColor();
+    }
     return;
   }
 
   alarmActive_ = true;
-  ledOn_ = true;
   alarmStartedAt_ = millis();
-  lastBlinkAt_ = alarmStartedAt_;
-  rgbLedWrite(RGB_BUILTIN, 255, 0, 100);
-  Serial.println("[ALARM] Alarm started; the RGB LED will blink for 10 seconds.");
+  updateLedColor();
+  Serial.printf("[ALARM] Alarm started for slot %u; the LED will stay on for 10 seconds.\n",
+                slot);
+}
+
+void AlarmManager::updateLedColor() const {
+  const uint8_t red = (activeSlotMask_ & 0x01) ? ALARM_LED_BRIGHTNESS : 0;
+  const uint8_t green = (activeSlotMask_ & 0x02) ? ALARM_LED_BRIGHTNESS : 0;
+  const uint8_t blue = (activeSlotMask_ & 0x04) ? ALARM_LED_BRIGHTNESS : 0;
+  rgbLedWrite(RGB_BUILTIN, red, green, blue);
 }
 
 void AlarmManager::stopAlarm() {
   alarmActive_ = false;
-  ledOn_ = false;
+  activeSlotMask_ = 0;
   rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
   Serial.println("[ALARM] Alarm stopped; the LED is off.");
 }

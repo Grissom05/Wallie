@@ -4,6 +4,10 @@ Wallie is an ESP32-S3 medication reminder prototype. Scheduled doses currently
 trigger the onboard RGB LED and a serial-log simulation; no pill or water is
 physically dispensed.
 
+The alarm LED stays on for 10 seconds and encodes the active medicine slots:
+slot 1 is red, slot 2 is green, and slot 3 is blue. Simultaneous alarms combine
+the colors (for example, slots 1 and 2 appear yellow, and all three appear white).
+
 ## Firmware layout
 
 - `src/main.cpp` contains the HTTP API and application startup.
